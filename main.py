@@ -4,6 +4,7 @@ import subprocess
 import threading
 import shutil
 import re
+import os
 
 
 class YTDLPGUI:
@@ -16,7 +17,7 @@ class YTDLPGUI:
         self.is_downloading = False
 
         # -- Input Frame -- #
-        input_frame = tk.LabelFrame(root, text = "Add New Video", padx=10, pady=10)
+        input_frame = tk.LabelFrame(root, text="Add New Video", padx=10, pady=10)
         input_frame.pack(fill="x", padx=10, pady=5)
 
         # URL
@@ -39,7 +40,8 @@ class YTDLPGUI:
         folder_container = tk.Frame(input_frame)
         folder_container.grid(row=3, column=1, sticky="w", padx=5)
 
-        self.folder_var = tk.StringVar()
+        default_path = os.path.join(os.path.expanduser("~"), "Downloads")
+        self.folder_var = tk.StringVar(value=default_path)
         self.folder_entry = tk.Entry(folder_container, textvariable=self.folder_var, width = 38)
         self.folder_entry.pack(side=tk.LEFT)
         tk.Button(folder_container, text="Browse", command=self.browse_folder).pack(side=tk.LEFT, padx=2)
@@ -148,17 +150,25 @@ class YTDLPGUI:
             if task["status"] == "Done":
                 continue
 
-            # Update UI to "Downloading"
             self.root.after(0, lambda i=index: self.update_status(i, "Downloading..."))
 
-            # Construct Command
-            cmd = ["yt-dlp", "--newline"] # --newline is crucial for parsing output!
+            yt_dlp_path = r"C:\ytdl\yt-dlp.exe"
 
+            cmd = [yt_dlp_path, "--newline"]
+
+            # --- 1. SETUP PATHS ---
             if task["referer"]:
                 cmd.extend(["--referer", task["referer"]])
 
             if task["folder"]:
-                cmd.extend(["-P", task["folder"]])
+                clean_path = os.path.normpath(task["folder"])
+                try:
+                    os.makedirs(clean_path, exist_ok=True)
+                except OSError as e:
+                    self.root.after(0, lambda: messagebox.showerror("Folder Error", f"Cannot create folder:\n{e}"))
+                    self.root.after(0, lambda i=index: self.update_status(i, "Failed"))
+                    continue
+                cmd.extend(["-P", clean_path])
 
             if task["filename"]:
                 cmd.extend(["-o", f"{task['filename']}.%(ext)s"])
@@ -167,32 +177,46 @@ class YTDLPGUI:
 
             cmd.append(task["url"])
 
-            # Run process
+            # --- 2. RUN AND CATCH ERROR ---
             try:
+                # We Capture Stderr (Errors) separately now
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
+                    stderr=subprocess.PIPE,  # <--- Capture errors here
                     text=True,
                     encoding='utf-8',
-                    errors='replace' # Prevent crashing on emoji/special chars
+                    errors='replace'
                 )
 
+                # Read output while running
                 while True:
-                    line = process.stdout.readline()
-                    if not line and process.poll() is not None:
+                    # Check for normal output
+                    output_line = process.stdout.readline()
+                    if output_line:
+                        self.root.after(0, lambda l=output_line: self.parse_progress(l))
+
+                    # Check if finished
+                    if not output_line and process.poll() is not None:
                         break
-                    if line:
-                        self.root.after(0, lambda l=line: self.parse_progress(l))
+
+                # Get the rest of the output (including error messages)
+                remaining_stdout, remaining_stderr = process.communicate()
 
                 if process.returncode == 0:
                     self.root.after(0, lambda i=index: self.update_status(i, "Done"))
                     task["status"] = "Done"
                 else:
+                    # SHOW THE ERROR TO THE USER
+                    error_message = remaining_stderr if remaining_stderr else "Unknown Error"
+                    print(f"DEBUG ERROR: {error_message}")  # Print to PyCharm console
+                    self.root.after(0, lambda msg=error_message: messagebox.showerror("Download Failed",
+                                                                                      f"yt-dlp error:\n{msg}"))
                     self.root.after(0, lambda i=index: self.update_status(i, "Error"))
 
             except Exception as e:
-                print(f"Error: {e}")
+                print(f"CRASH: {e}")
+                self.root.after(0, lambda msg=str(e): messagebox.showerror("Script Crash", f"Python Error:\n{msg}"))
                 self.root.after(0, lambda i=index: self.update_status(i, "Failed"))
 
         self.is_downloading = False
@@ -203,7 +227,7 @@ class YTDLPGUI:
     def update_status(self, index, status):
         current_values = self.tree.item(index, "values")
         if current_values:
-            self.tree.index(index, values=(current_values[0], current_values[1], status))
+            self.tree.item(index, values=(current_values[0], current_values[1], status))
 
         self.status_label.config(text=f"Task {index+1}/{len(self.queue_data)}: {status}")
 
@@ -212,11 +236,35 @@ class YTDLPGUI:
 
         if "[download]" in line and "%" in line:
             try:
-                match = re.search(r"(\d+\.\d+)%", line)
-                if match:
-                    percent = float(match.group(1))
+                # Extract percentage
+                pct_match = re.search(r"(\d+\.\d+)%", line)
+                if pct_match:
+                    percent = float(pct_match.group(1))
                     self.progress_var.set(percent)
-                    self.status_label.config(text=f"Downloading: {percent}%")
+
+                    # Extract ETA
+                    eta_match = re.search(r"ETA\s+([\d:]+)", line)
+                    eta_text = ""
+
+                    if eta_match:
+                        raw_time = eta_match.group(1)
+                        parts = list(map(int, raw_time.split(':')))
+
+                        if len(parts) == 2:
+                            mins, secs = parts
+                            if mins == 0:
+                                eta_text = "Less than a minute..."
+                            else:
+                                eta_text = f"{mins} Minute{'s' if mins != 1 else ''} left..."
+                        elif len(parts) == 3:
+                            hours, mins, secs = parts
+                            eta_text = f"{hours} Hour{'s' if hours != 1 else ''} {mins} Minute{'s' if mins != 1 else ''} left..."
+
+                    display_text = f"Downloading: {percent}%"
+                    if eta_text:
+                        display_text += f" - {eta_text}"
+
+                    self.status_label.config(text=display_text)
             except:
                 pass
 
