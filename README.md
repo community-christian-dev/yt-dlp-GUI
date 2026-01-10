@@ -17,6 +17,8 @@ Before running this script, ensure you have the following installed:
 2. **yt-dlp:** The core engine must be installed and added to your system PATH
 3. **FFmpeg:** [Download Here](https://ffmpeg.org/download.html)
 
+_(If you need help installing ```yt-dlp``` and ```FFmpeg``` properly, I've found [this Reddit thread](https://www.reddit.com/r/youtubedl/comments/qzqzaz/can_someone_please_post_a_simple_guide_on_making/) helpful.)_
+
 ## TODO
 - Format selection
 - Queue persistence
