@@ -5,13 +5,22 @@ import threading
 import shutil
 import re
 import os
+import logging
+
+
+logging.basicConfig(
+    filename='download_app.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 
 class YTDLPGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Video Downloader")
-        self.root.geometry("700x550")
+        self.root.geometry("700x600")
 
         self.queue_data = []
         self.is_downloading = False
@@ -85,9 +94,28 @@ class YTDLPGUI:
         self.status_label = tk.Label(control_frame, text="Ready to start", fg="gray")
         self.status_label.pack()
 
+        # Button Container
+        btn_container = tk.Frame(control_frame)
+        btn_container.pack(pady=5)
+
         # Start Button
         self.start_btn = tk.Button(control_frame, text="Start Download", command=self.start_batch_thread, bg="#4CAF50", fg="white", font=("Arial", 11, "bold"))
         self.start_btn.pack(pady=5)
+
+        # Log Button
+        self.log_btn = tk.Button(btn_container, text="View Logs", command=self.open_log_file, bg="#607D8B", fg="white")
+        self.log_btn.pack(side=tk.LEFT, padx=5)
+
+    @staticmethod
+    def open_log_file():
+        log_file = "download_app.log"
+        if not os.path.exists(log_file):
+            messagebox.showinfo("Log Info", "No log file created yet.")
+            return
+        try:
+            os.startfile(log_file)
+        except AttributeError:
+            subprocess.call(["open" if os.name == "posix" else "xdg-open", log_file])
 
     def browse_folder(self):
         folder = filedialog.askdirectory()
@@ -146,6 +174,8 @@ class YTDLPGUI:
         thread.start()
 
     def process_queue(self):
+        logging.info("--- Batch Download Started ---")
+
         for index, task in enumerate(self.queue_data):
             if task["status"] == "Done":
                 continue
@@ -162,12 +192,16 @@ class YTDLPGUI:
 
             if task["folder"]:
                 clean_path = os.path.normpath(task["folder"])
-                try:
-                    os.makedirs(clean_path, exist_ok=True)
-                except OSError as e:
-                    self.root.after(0, lambda: messagebox.showerror("Folder Error", f"Cannot create folder:\n{e}"))
+
+                # CHECK IF EXISTS
+                if not os.path.isdir(clean_path):
+                    err_msg = f"Folder does not exist: {clean_path}"
+                    logging.error(f"Folder Error for URL {task['url']}: {err_msg}")
+
+                    self.root.after(0, lambda: messagebox.showerror("Folder Error", err_msg))
                     self.root.after(0, lambda i=index: self.update_status(i, "Failed"))
-                    continue
+                    continue  # Stop processing this specific task
+
                 cmd.extend(["-P", clean_path])
 
             if task["filename"]:
@@ -179,6 +213,8 @@ class YTDLPGUI:
 
             # --- 2. RUN AND CATCH ERROR ---
             try:
+                logging.info(f"Starting download: {task['url']}")
+
                 # We Capture Stderr (Errors) separately now
                 process = subprocess.Popen(
                     cmd,
@@ -206,15 +242,19 @@ class YTDLPGUI:
                 if process.returncode == 0:
                     self.root.after(0, lambda i=index: self.update_status(i, "Done"))
                     task["status"] = "Done"
+                    logging.info(f"Success: {task['url']}")
                 else:
                     # SHOW THE ERROR TO THE USER
                     error_message = remaining_stderr if remaining_stderr else "Unknown Error"
-                    print(f"DEBUG ERROR: {error_message}")  # Print to PyCharm console
+
+                    logging.error(f"FAIL: {task['url']} | Code: {process.returncode} | Error: {error_message.strip()}")
+
                     self.root.after(0, lambda msg=error_message: messagebox.showerror("Download Failed",
                                                                                       f"yt-dlp error:\n{msg}"))
                     self.root.after(0, lambda i=index: self.update_status(i, "Error"))
 
             except Exception as e:
+                logging.exception(f"CRITICAL EXCEPTION processing {task['url']}")
                 print(f"CRASH: {e}")
                 self.root.after(0, lambda msg=str(e): messagebox.showerror("Script Crash", f"Python Error:\n{msg}"))
                 self.root.after(0, lambda i=index: self.update_status(i, "Failed"))
@@ -223,6 +263,7 @@ class YTDLPGUI:
         self.root.after(0, lambda: self.start_btn.config(state=tk.NORMAL))
         self.root.after(0, lambda: self.status_label.config(text="All tasks finished."))
         self.root.after(0, lambda: self.progress_var.set(0))
+        logging.info("--- Batch Finished ---")
 
     def update_status(self, index, status):
         current_values = self.tree.item(index, "values")
