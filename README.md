@@ -26,7 +26,6 @@ _(If you need help installing ```yt-dlp``` and ```FFmpeg``` properly, I've found
 - Resolution selector
 - Cancel button
 - Theme support
-- Error logging
 
 ## Contributions Are Welcome
 1. Fork the project
