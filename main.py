@@ -20,7 +20,7 @@ class YTDLPGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Video Downloader")
-        self.root.geometry("700x600")
+        self.root.geometry("750x650")
 
         self.queue_data = []
         self.is_downloading = False
@@ -55,22 +55,31 @@ class YTDLPGUI:
         self.folder_entry.pack(side=tk.LEFT)
         tk.Button(folder_container, text="Browse", command=self.browse_folder).pack(side=tk.LEFT, padx=2)
 
+        # Format Selection
+        tk.Label(input_frame, text="Format:").grid(row=4, column=0, sticky="w")
+        self.format_var = tk.StringVar(value="MP4")
+        self.format_combo = ttk.Combobox(input_frame, textvariable=self.format_var, state="readonly", width=47)
+        self.format_combo['values'] = ("MP4", "MP3")
+        self.format_combo.grid(row=4, column=1, padx=5, pady=2, sticky="w")
+
         # Add Button
         self.add_btn = tk.Button(input_frame, text="Add to Queue", command=self.add_to_queue, bg="#2196F3", fg="white")
-        self.add_btn.grid(row=4, column=1, sticky="e", pady=10)
+        self.add_btn.grid(row=5, column=1, sticky="e", pady=10)
 
         # -- Queue Frame -- #
         queue_frame = tk.LabelFrame(root, text="Download Queue", padx=10, pady=10)
         queue_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
         # Treeview (Table)
-        columns = ("filename", "url", "status")
+        columns = ("filename", "format", "url", "status")
         self.tree = ttk.Treeview(queue_frame, columns=columns, show="headings", height=8)
         self.tree.heading("filename", text="Filename")
+        self.tree.heading("format", text="Format")
         self.tree.heading("url", text="URL")
         self.tree.heading("status", text="Status")
 
         self.tree.column("filename", width=150)
+        self.tree.column("format", width=80)
         self.tree.column("url", width=250)
         self.tree.column("status", width=100)
 
@@ -127,6 +136,7 @@ class YTDLPGUI:
         referer = self.referer_entry.get().strip()
         filename = self.filename_entry.get().strip()
         folder = self.folder_var.get().strip()
+        format_type = self.format_var.get()
 
         if not url:
             messagebox.showerror("Error", "URL is required")
@@ -141,13 +151,14 @@ class YTDLPGUI:
             "referer": referer,
             "filename": filename,
             "folder": folder,
+            "format": format_type,
             "status": "Pending",
             "id": len(self.queue_data)
         }
         self.queue_data.append(task)
 
         # Add to UI Treeview
-        self.tree.insert("", "end", iid=task["id"], values=(display_name, url, "Pending"))
+        self.tree.insert("", "end", iid=task["id"], values=(display_name, format_type, url, "Pending"))
 
         # Clear inputs
         self.url_entry.delete(0, tk.END)
@@ -186,7 +197,13 @@ class YTDLPGUI:
 
             cmd = [yt_dlp_path, "--newline"]
 
-            # --- 1. SETUP PATHS ---
+            # --- 1. SETUP FORMAT ARGUMENTS ---
+            if "MP3" in task["format"]:
+                cmd.extend(["-x", "--audio-format", "mp3"])
+            else:
+                cmd.extend(["-S", "ext:mp4:m4a", "--merge-output-format", "mp4"])
+
+            # --- 2. SETUP PATHS ---
             if task["referer"]:
                 cmd.extend(["--referer", task["referer"]])
 
@@ -211,7 +228,7 @@ class YTDLPGUI:
 
             cmd.append(task["url"])
 
-            # --- 2. RUN AND CATCH ERROR ---
+            # --- 3. RUN AND CATCH ERROR ---
             try:
                 logging.info(f"Starting download: {task['url']}")
 
@@ -268,7 +285,7 @@ class YTDLPGUI:
     def update_status(self, index, status):
         current_values = self.tree.item(index, "values")
         if current_values:
-            self.tree.item(index, values=(current_values[0], current_values[1], status))
+            self.tree.item(index, values=(current_values[0], current_values[1], current_values[2], status))
 
         self.status_label.config(text=f"Task {index+1}/{len(self.queue_data)}: {status}")
 
